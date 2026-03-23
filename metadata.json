@@ -1,0 +1,5 @@
+{
+  "name": "HabitHub",
+  "description": "A shared habit tracking app for partners to reach health goals together. Track steps (Fitbit), water, supplements, affirmations, and calories.",
+  "requestFramePermissions": ["geolocation"]
+}

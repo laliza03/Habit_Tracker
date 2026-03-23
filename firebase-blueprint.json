@@ -1,0 +1,84 @@
+{
+  "entities": {
+    "UserProfile": {
+      "title": "User Profile",
+      "description": "User information and partner link",
+      "type": "object",
+      "properties": {
+        "uid": { "type": "string" },
+        "displayName": { "type": "string" },
+        "email": { "type": "string" },
+        "photoURL": { "type": "string" },
+        "partnerUid": { "type": "string", "description": "UID of the partner" },
+        "fitbitAccessToken": { "type": "string" },
+        "fitbitRefreshToken": { "type": "string" },
+        "fitbitUserId": { "type": "string" },
+        "calorieGoal": { "type": "number" },
+        "stepGoal": { "type": "number" },
+        "waterGoal": { "type": "number" }
+      },
+      "required": ["uid", "email"]
+    },
+    "Habit": {
+      "title": "Habit",
+      "description": "A habit to track",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "name": { "type": "string" },
+        "type": { "type": "string", "enum": ["numeric", "boolean"] },
+        "unit": { "type": "string" },
+        "target": { "type": "number" },
+        "ownerUid": { "type": "string" }
+      },
+      "required": ["id", "name", "type", "ownerUid"]
+    },
+    "DailyLog": {
+      "title": "Daily Log",
+      "description": "Daily progress for habits",
+      "type": "object",
+      "properties": {
+        "uid": { "type": "string" },
+        "date": { "type": "string", "format": "date" },
+        "steps": { "type": "number" },
+        "water": { "type": "number" },
+        "calories": { "type": "number" },
+        "supplements": { "type": "object", "description": "Map of supplement name to boolean" },
+        "affirmations": { "type": "boolean" },
+        "completedAll": { "type": "boolean" }
+      },
+      "required": ["uid", "date"]
+    },
+    "MonthlyGoal": {
+      "title": "Monthly Goal",
+      "description": "Goals for the month",
+      "type": "object",
+      "properties": {
+        "uid": { "type": "string" },
+        "month": { "type": "string", "description": "YYYY-MM" },
+        "goalType": { "type": "string" },
+        "targetValue": { "type": "number" },
+        "currentValue": { "type": "number" }
+      },
+      "required": ["uid", "month", "goalType", "targetValue"]
+    }
+  },
+  "firestore": {
+    "/users/{uid}": {
+      "schema": "UserProfile",
+      "description": "User profiles"
+    },
+    "/habits/{habitId}": {
+      "schema": "Habit",
+      "description": "Custom habits"
+    },
+    "/logs/{logId}": {
+      "schema": "DailyLog",
+      "description": "Daily logs (logId is uid_date)"
+    },
+    "/goals/{goalId}": {
+      "schema": "MonthlyGoal",
+      "description": "Monthly goals (goalId is uid_month_type)"
+    }
+  }
+}

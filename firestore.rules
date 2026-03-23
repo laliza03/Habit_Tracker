@@ -1,0 +1,117 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+    // ===============================================================
+    // Helper Functions
+    // ===============================================================
+    function isAuthenticated() {
+      return request.auth != null;
+    }
+    
+    function isOwner(userId) {
+      return isAuthenticated() && request.auth.uid == userId;
+    }
+    
+    function isPartnerOf(userId) {
+      // Check if the user at userId has the current user as their partner
+      // We use get() which will evaluate the rules for the user document
+      let userDoc = get(/databases/$(database)/documents/users/$(userId));
+      return isAuthenticated() && 
+             userDoc != null && 
+             userDoc.data.get('partnerUid', '') == request.auth.uid;
+    }
+
+    function isValidUser(data) {
+      let allowedFields = ['uid', 'displayName', 'email', 'photoURL', 'partnerUid', 'fitbitAccessToken', 'fitbitRefreshToken', 'fitbitUserId', 'calorieGoal', 'stepGoal', 'waterGoal'];
+      return data.keys().hasAll(['uid', 'email']) &&
+             data.keys().hasOnly(allowedFields) &&
+             data.uid is string &&
+             data.email is string &&
+             (!('displayName' in data) || data.displayName is string) &&
+             (!('photoURL' in data) || data.photoURL is string) &&
+             (!('partnerUid' in data) || data.partnerUid is string) &&
+             (!('fitbitAccessToken' in data) || data.fitbitAccessToken is string) &&
+             (!('fitbitRefreshToken' in data) || data.fitbitRefreshToken is string) &&
+             (!('fitbitUserId' in data) || data.fitbitUserId is string) &&
+             (!('calorieGoal' in data) || data.calorieGoal is number) &&
+             (!('stepGoal' in data) || data.stepGoal is number) &&
+             (!('waterGoal' in data) || data.waterGoal is number);
+    }
+
+    function isValidLog(data) {
+      return data.keys().hasAll(['uid', 'date']) &&
+             data.uid is string &&
+             data.date is string &&
+             (!('steps' in data) || data.steps is number) &&
+             (!('water' in data) || data.water is number) &&
+             (!('calories' in data) || data.calories is number) &&
+             (!('supplements' in data) || data.supplements is map) &&
+             (!('affirmations' in data) || data.affirmations is bool) &&
+             (!('completedAll' in data) || data.completedAll is bool);
+    }
+
+    function isValidGoal(data) {
+      return data.keys().hasAll(['uid', 'month', 'goalType', 'targetValue']) &&
+             data.uid is string &&
+             data.month is string &&
+             data.goalType is string &&
+             data.targetValue is number &&
+             (!('currentValue' in data) || data.currentValue is number);
+    }
+
+    // ===============================================================
+    // Rules
+    // ===============================================================
+    
+    match /users/{userId} {
+      // Allow read if owner OR if the document exists and I am the partner
+      allow read: if isAuthenticated() && (
+        userId == request.auth.uid || 
+        (resource != null && resource.data.get('partnerUid', '') == request.auth.uid)
+      );
+      allow create: if isOwner(userId) && isValidUser(request.resource.data);
+      allow update: if isOwner(userId) && isValidUser(request.resource.data);
+    }
+
+    match /habits/{habitId} {
+      allow read: if isAuthenticated() && (
+        isOwner(resource.data.ownerUid) || 
+        isPartnerOf(resource.data.ownerUid)
+      );
+      allow create: if isAuthenticated() && isOwner(request.resource.data.ownerUid);
+      allow update: if isAuthenticated() && isOwner(resource.data.ownerUid);
+      allow delete: if isAuthenticated() && isOwner(resource.data.ownerUid);
+    }
+
+    match /logs/{logId} {
+      // Allow get if owner (by ID) or partner (by data)
+      allow get: if isAuthenticated() && (
+        logId.matches("^" + request.auth.uid + "_.*") || 
+        (resource != null && isPartnerOf(resource.data.uid))
+      );
+      // Allow list if query is filtered by owner UID or partner UID
+      allow list: if isAuthenticated() && (
+        request.auth.uid == resource.data.uid || 
+        isPartnerOf(resource.data.uid)
+      );
+      allow create: if isAuthenticated() && isOwner(request.resource.data.uid) && isValidLog(request.resource.data);
+      allow update: if isAuthenticated() && isOwner(resource.data.uid) && isValidLog(request.resource.data);
+    }
+
+    match /goals/{goalId} {
+      // Allow get if owner (by ID) or partner (by data)
+      allow get: if isAuthenticated() && (
+        goalId.matches("^" + request.auth.uid + "_.*") || 
+        (resource != null && isPartnerOf(resource.data.uid))
+      );
+      // Allow list if query is filtered by owner UID or partner UID
+      allow list: if isAuthenticated() && (
+        request.auth.uid == resource.data.uid || 
+        isPartnerOf(resource.data.uid)
+      );
+      allow create: if isAuthenticated() && isOwner(request.resource.data.uid) && isValidGoal(request.resource.data);
+      allow update: if isAuthenticated() && isOwner(request.resource.data.uid) && isValidGoal(request.resource.data);
+      allow delete: if isAuthenticated() && isOwner(resource.data.uid);
+    }
+  }
+}
