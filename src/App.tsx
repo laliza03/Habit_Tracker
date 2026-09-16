@@ -1,152 +1,350 @@
-import React, { useState, useEffect } from 'react';
-import { auth, db, handleFirestoreError, OperationType } from './firebase';
+import React, { useState, useEffect, useRef } from 'react';
+import { auth, db } from './firebase';
 import { onAuthStateChanged, signInWithPopup, GoogleAuthProvider, signOut, User } from 'firebase/auth';
-import { doc, getDoc, setDoc, onSnapshot, getDocFromServer } from 'firebase/firestore';
+import { doc, getDoc, setDoc, onSnapshot } from 'firebase/firestore';
 import { UserProfile } from './types';
 import Dashboard from './components/Dashboard';
 import Goals from './components/Goals';
 import Partner from './components/Partner';
 import Settings from './components/Settings';
-import { Layout, LogIn, Activity, Target, Users, Settings as SettingsIcon, LogOut, AlertCircle } from 'lucide-react';
+import MobileInstallPrompt from './components/MobileInstallPrompt';
+import { Layout, LogIn, Activity, Target, Users, Settings as SettingsIcon, LogOut, AlertCircle, Smartphone, RotateCcw } from 'lucide-react';
 import { motion, AnimatePresence } from 'framer-motion';
-
-async function testConnection() {
-  try {
-    await getDocFromServer(doc(db, 'test', 'connection'));
-  } catch (error) {
-    if (error instanceof Error && error.message.includes('the client is offline')) {
-      console.error("Please check your Firebase configuration.");
-    }
-  }
-}
 
 export default function App() {
   const [user, setUser] = useState<User | null>(null);
-  const [profile, setProfile] = useState<UserProfile | null>(null);
+  const [profile, setProfile] = useState<UserProfile | null>(() => {
+    try {
+      const saved = localStorage.getItem('habithub_active_profile');
+      if (saved) return JSON.parse(saved);
+    } catch {}
+    return null;
+  });
   const [loading, setLoading] = useState(true);
+  const [showSlowWarning, setShowSlowWarning] = useState(false);
+  const [loginError, setLoginError] = useState<string | null>(null);
   const [activeTab, setActiveTab] = useState<'dashboard' | 'goals' | 'partner' | 'settings'>('dashboard');
 
+  const unsubPublicRef = useRef<(() => void) | null>(null);
+  const unsubPrivateRef = useRef<(() => void) | null>(null);
+
   useEffect(() => {
-    testConnection();
-    const unsubscribe = onAuthStateChanged(auth, async (u) => {
+    // Show recovery options if loading takes longer than 1.5 seconds
+    const slowTimer = setTimeout(() => {
+      setShowSlowWarning(true);
+    }, 1500);
+
+    // Hard fallback: force loading to false after 2.5 seconds max
+    const hardTimeout = setTimeout(() => {
+      setLoading(false);
+    }, 2500);
+
+    const unsubscribeAuth = onAuthStateChanged(auth, async (u) => {
       setUser(u);
-      if (u) {
-        const path = `users/${u.uid}`;
-        try {
-          const userDoc = await getDoc(doc(db, 'users', u.uid));
-          if (userDoc.exists()) {
-            setProfile(userDoc.data() as UserProfile);
-          } else {
-            const newProfile: UserProfile = {
-              uid: u.uid,
-              displayName: u.displayName || 'User',
-              email: u.email || '',
-              photoURL: u.photoURL || '',
-              calorieGoal: 2000,
-              stepGoal: 10000,
-              waterGoal: 2000,
-            };
-            await setDoc(doc(db, 'users', u.uid), newProfile);
-            setProfile(newProfile);
+
+      // Clean up previous snapshot listeners
+      if (unsubPublicRef.current) {
+        unsubPublicRef.current();
+        unsubPublicRef.current = null;
+      }
+      if (unsubPrivateRef.current) {
+        unsubPrivateRef.current();
+        unsubPrivateRef.current = null;
+      }
+
+      if (!u) {
+        // If there is no stored guest/active profile, clear it
+        if (!localStorage.getItem('habithub_active_profile')) {
+          setProfile(null);
+        }
+        setLoading(false);
+        return;
+      }
+
+      // 1. Create immediate local fallback profile so the user is NEVER stuck waiting
+      const defaultProfile: UserProfile = {
+        uid: u.uid,
+        displayName: u.displayName || 'User',
+        email: u.email || '',
+        photoURL: u.photoURL || '',
+        calorieGoal: 2000,
+        stepGoal: 10000,
+        waterGoal: 2000,
+        supplements: ['creatine', 'biotin', 'omega', 'magnesium'],
+      };
+      setProfile(defaultProfile);
+      try {
+        localStorage.setItem('habithub_active_profile', JSON.stringify(defaultProfile));
+      } catch {}
+
+      try {
+        // 2. Fetch public profile from Firestore
+        const userDocRef = doc(db, 'users', u.uid);
+        const userDoc = await getDoc(userDocRef);
+
+        if (userDoc.exists()) {
+          const merged = {
+            ...defaultProfile,
+            ...userDoc.data(),
+          } as UserProfile;
+          setProfile(merged);
+          try {
+            localStorage.setItem('habithub_active_profile', JSON.stringify(merged));
+          } catch {}
+        } else {
+          // Initialize new profile in Firestore
+          const { email, ...publicProfile } = defaultProfile;
+          await setDoc(userDocRef, publicProfile);
+          try {
+            await setDoc(doc(db, 'user_private', u.uid), { email: u.email || '' });
+          } catch (e) {
+            console.warn('Could not write private profile', e);
           }
-        } catch (error) {
-          handleFirestoreError(error, OperationType.GET, path);
         }
 
-        // Real-time profile updates
-        onSnapshot(doc(db, 'users', u.uid), (snapshot) => {
+        // Update email to UID mapping for partner linking (non-blocking)
+        if (u.email) {
+          setDoc(doc(db, 'email_to_uid', u.email.toLowerCase()), { uid: u.uid }).catch(() => {});
+        }
+
+        // 3. Attach real-time listeners for profile updates
+        unsubPublicRef.current = onSnapshot(doc(db, 'users', u.uid), (snapshot) => {
           if (snapshot.exists()) {
-            setProfile(snapshot.data() as UserProfile);
+            setProfile(prev => {
+              const updated = { ...(prev || defaultProfile), ...snapshot.data() } as UserProfile;
+              try {
+                localStorage.setItem('habithub_active_profile', JSON.stringify(updated));
+              } catch {}
+              return updated;
+            });
           }
-        }, (error) => {
-          handleFirestoreError(error, OperationType.GET, path);
+        }, (err) => {
+          console.warn('Realtime public profile sync warning:', err);
         });
-      } else {
-        setProfile(null);
+
+        unsubPrivateRef.current = onSnapshot(doc(db, 'user_private', u.uid), (snapshot) => {
+          if (snapshot.exists()) {
+            setProfile(prev => {
+              const updated = { ...(prev || defaultProfile), ...snapshot.data() } as UserProfile;
+              try {
+                localStorage.setItem('habithub_active_profile', JSON.stringify(updated));
+              } catch {}
+              return updated;
+            });
+          }
+        }, (err) => {
+          console.warn('Realtime private profile sync warning:', err);
+        });
+      } catch (error) {
+        console.warn('Error loading profile from Firestore, using default profile:', error);
+      } finally {
+        setLoading(false);
       }
-      setLoading(false);
     });
 
-    return () => unsubscribe();
+    return () => {
+      clearTimeout(slowTimer);
+      clearTimeout(hardTimeout);
+      unsubscribeAuth();
+      if (unsubPublicRef.current) unsubPublicRef.current();
+      if (unsubPrivateRef.current) unsubPrivateRef.current();
+    };
   }, []);
 
   const handleLogin = async () => {
+    setLoginError(null);
     const provider = new GoogleAuthProvider();
     try {
       await signInWithPopup(auth, provider);
-    } catch (error) {
+    } catch (error: any) {
       console.error('Login error:', error);
+      if (error?.code === 'auth/popup-blocked') {
+        setLoginError('Sign-in popup was blocked by the browser. Open in a new tab or continue as Guest.');
+      } else if (error?.code === 'auth/cancelled-popup-request') {
+        setLoginError('Sign-in request was cancelled. Try again or continue as Guest.');
+      } else {
+        setLoginError(error?.message || 'Failed to sign in. You can continue as Guest to use the app right away.');
+      }
     }
   };
 
-  const handleLogout = () => signOut(auth);
+  const handleGuestLogin = () => {
+    const guestId = localStorage.getItem('habithub_guest_id') || `guest_${Math.random().toString(36).substring(2, 9)}`;
+    localStorage.setItem('habithub_guest_id', guestId);
+    
+    const guestProfile: UserProfile = {
+      uid: guestId,
+      displayName: 'Partner Explorer',
+      email: 'guest@habithub.app',
+      calorieGoal: 2000,
+      stepGoal: 10000,
+      waterGoal: 2000,
+      supplements: ['creatine', 'biotin', 'omega', 'magnesium'],
+    };
 
-  if (loading || (user && !profile)) {
+    setProfile(guestProfile);
+    try {
+      localStorage.setItem('habithub_active_profile', JSON.stringify(guestProfile));
+    } catch {}
+    setLoading(false);
+  };
+
+  const handleLogout = () => {
+    localStorage.removeItem('habithub_active_profile');
+    setProfile(null);
+    setUser(null);
+    signOut(auth).catch(() => {});
+  };
+
+  const currentProfile: UserProfile | null = profile || (user ? {
+    uid: user.uid,
+    displayName: user.displayName || 'User',
+    email: user.email || '',
+    photoURL: user.photoURL || '',
+    calorieGoal: 2000,
+    stepGoal: 10000,
+    waterGoal: 2000,
+  } : null);
+
+  if (loading && !profile && !user) {
     return (
-      <div className="min-h-screen bg-[#0B2B26] flex items-center justify-center">
+      <div className="min-h-screen bg-[#0B2B26] flex flex-col items-center justify-center p-6 text-center">
         <motion.div 
-          animate={{ scale: [1, 1.1, 1] }}
-          transition={{ repeat: Infinity, duration: 2 }}
-          className="text-accent"
+          animate={{ scale: [1, 1.15, 1] }}
+          transition={{ repeat: Infinity, duration: 1.8, ease: "easeInOut" }}
+          className="text-accent mb-6"
         >
-          <Activity size={48} />
+          <Activity size={52} />
         </motion.div>
+
+        <p className="text-white/70 font-medium text-sm">Loading HabitHub...</p>
+
+        {showSlowWarning && (
+          <motion.div 
+            initial={{ opacity: 0, y: 10 }}
+            animate={{ opacity: 1, y: 0 }}
+            className="mt-6 max-w-xs w-full bg-white/5 border border-white/10 p-5 rounded-2xl space-y-3"
+          >
+            <p className="text-xs text-white/50">
+              Taking longer than expected?
+            </p>
+            <div className="flex gap-2">
+              <button
+                onClick={handleGuestLogin}
+                className="flex-1 py-2.5 px-3 bg-accent text-paper font-bold text-xs rounded-xl hover:bg-accent/90 transition-all active:scale-95"
+              >
+                Instant Access
+              </button>
+              <button
+                onClick={() => window.location.reload()}
+                className="py-2.5 px-3 bg-white/10 text-white font-medium text-xs rounded-xl hover:bg-white/20 transition-all flex items-center justify-center gap-1 active:scale-95"
+                title="Reload page"
+              >
+                <RotateCcw size={13} />
+                <span>Reload</span>
+              </button>
+            </div>
+          </motion.div>
+        )}
       </div>
     );
   }
 
-  if (!user) {
+  if (!currentProfile) {
     return (
       <div className="min-h-screen bg-paper flex flex-col items-center justify-center p-6 text-center">
         <motion.div 
           initial={{ opacity: 0, y: 20 }}
           animate={{ opacity: 1, y: 0 }}
-          className="max-w-md w-full bg-white/5 backdrop-blur-xl p-10 rounded-[2.5rem] shadow-2xl shadow-black/20 border border-white/10"
+          className="max-w-md w-full bg-white/5 backdrop-blur-xl p-8 sm:p-10 rounded-[2.5rem] shadow-2xl shadow-black/20 border border-white/10"
         >
           <div className="w-20 h-20 bg-accent text-paper rounded-[2rem] flex items-center justify-center mx-auto mb-8 shadow-xl shadow-accent/30">
             <Activity size={40} />
           </div>
-          <h1 className="text-4xl font-serif font-bold text-white mb-4 tracking-tight">HabitHub</h1>
-          <p className="text-white/40 mb-10 font-medium">Track healthy habits together with your partner and reach your goals.</p>
-          <button
-            onClick={handleLogin}
-            className="w-full flex items-center justify-center gap-4 bg-accent text-paper py-5 rounded-2xl font-bold hover:bg-accent/90 transition-all active:scale-[0.98] shadow-lg shadow-accent/20"
-          >
-            <LogIn size={22} />
-            Sign in with Google
-          </button>
+          <h1 className="text-4xl font-serif font-bold text-white mb-3 tracking-tight">HabitHub</h1>
+          <p className="text-white/50 mb-8 font-medium text-sm sm:text-base">
+            Track healthy habits together with your partner and reach your daily goals.
+          </p>
+
+          {loginError && (
+            <motion.div
+              initial={{ opacity: 0, y: -5 }}
+              animate={{ opacity: 1, y: 0 }}
+              className="mb-6 p-4 bg-rose-500/15 border border-rose-500/30 rounded-2xl text-rose-300 text-xs text-left space-y-2"
+            >
+              <div className="flex items-center gap-2 font-bold">
+                <AlertCircle size={15} />
+                <span>Sign-In Notice</span>
+              </div>
+              <p>{loginError}</p>
+            </motion.div>
+          )}
+
+          <div className="space-y-3">
+            <button
+              onClick={handleLogin}
+              className="w-full flex items-center justify-center gap-3 bg-accent text-paper py-4 rounded-2xl font-bold hover:bg-accent/90 transition-all active:scale-[0.98] shadow-lg shadow-accent/20"
+            >
+              <LogIn size={20} />
+              <span>Sign In with Google</span>
+            </button>
+
+            <button
+              onClick={handleGuestLogin}
+              className="w-full flex items-center justify-center gap-2 bg-white/10 text-white hover:bg-white/15 py-3.5 rounded-2xl font-bold text-sm transition-all active:scale-[0.98] border border-white/10"
+            >
+              <span>Instant Guest Mode</span>
+            </button>
+          </div>
+
+          <div className="mt-8 flex items-center justify-center gap-2 text-white/40 text-xs font-medium">
+            <Smartphone size={14} className="text-accent" />
+            <span>Mobile-ready for iOS & Android</span>
+          </div>
         </motion.div>
       </div>
     );
   }
 
   return (
-    <div className="min-h-screen bg-paper pb-32">
-      <header className="bg-paper/80 border-b border-white/5 sticky top-0 z-10 backdrop-blur-md">
-        <div className="max-w-md mx-auto px-8 py-6 flex items-center justify-between">
+    <div className="min-h-screen bg-paper pb-36">
+      <header className="bg-paper/80 border-b border-white/10 sticky top-0 z-30 backdrop-blur-xl safe-top">
+        <div className="max-w-md mx-auto px-6 py-4 flex items-center justify-between">
           <div className="flex items-center gap-3">
-            <div className="w-10 h-10 bg-accent text-paper rounded-2xl flex items-center justify-center shadow-lg shadow-accent/20">
-              <Activity size={20} />
+            <div className="w-10 h-10 bg-gradient-to-tr from-accent to-pink-300 text-paper rounded-2xl flex items-center justify-center shadow-lg shadow-accent/25 shrink-0">
+              <Activity size={20} className="stroke-[2.5]" />
             </div>
-            <span className="font-serif font-bold text-2xl tracking-tight text-white">HabitHub</span>
+            <div>
+              <span className="font-serif font-extrabold text-2xl tracking-tight text-white block leading-none">HabitHub</span>
+              <span className="text-[9px] font-bold text-accent uppercase tracking-widest mt-0.5 block">Fitness & Duo Habits</span>
+            </div>
           </div>
-          <div className="flex items-center gap-5">
-            {profile?.photoURL && (
+          <div className="flex items-center gap-3">
+            {currentProfile?.photoURL ? (
               <img 
-                src={profile.photoURL} 
+                src={currentProfile.photoURL} 
                 alt="Profile" 
-                className="w-10 h-10 rounded-full border-2 border-white/10 shadow-sm" 
+                className="w-9 h-9 rounded-full border-2 border-accent/40 shadow-sm object-cover" 
                 referrerPolicy="no-referrer" 
               />
+            ) : (
+              <div className="w-9 h-9 rounded-full bg-white/10 flex items-center justify-center text-white/70 border border-white/15 text-xs font-bold">
+                {currentProfile?.displayName ? currentProfile.displayName.charAt(0).toUpperCase() : 'U'}
+              </div>
             )}
-            <button onClick={handleLogout} className="text-white/40 hover:text-white transition-colors">
-              <LogOut size={20} />
+            <button 
+              onClick={handleLogout} 
+              className="text-white/40 hover:text-white transition-colors p-1.5 hover:bg-white/10 rounded-xl"
+              title="Sign Out"
+            >
+              <LogOut size={18} />
             </button>
           </div>
         </div>
       </header>
 
-      <main className="max-w-md mx-auto px-8 py-10">
+      <main className="max-w-md mx-auto px-5 sm:px-8 py-6 sm:py-8">
+        <MobileInstallPrompt />
         <AnimatePresence mode="wait">
           {activeTab === 'dashboard' && (
             <motion.div 
@@ -154,9 +352,9 @@ export default function App() {
               initial={{ opacity: 0, y: 10 }} 
               animate={{ opacity: 1, y: 0 }} 
               exit={{ opacity: 0, y: -10 }}
-              transition={{ duration: 0.4, ease: "easeOut" }}
+              transition={{ duration: 0.3, ease: "easeOut" }}
             >
-              <Dashboard profile={profile!} />
+              <Dashboard profile={currentProfile} />
             </motion.div>
           )}
           {activeTab === 'goals' && (
@@ -165,9 +363,9 @@ export default function App() {
               initial={{ opacity: 0, y: 10 }} 
               animate={{ opacity: 1, y: 0 }} 
               exit={{ opacity: 0, y: -10 }}
-              transition={{ duration: 0.4, ease: "easeOut" }}
+              transition={{ duration: 0.3, ease: "easeOut" }}
             >
-              <Goals profile={profile!} />
+              <Goals profile={currentProfile} />
             </motion.div>
           )}
           {activeTab === 'partner' && (
@@ -176,9 +374,9 @@ export default function App() {
               initial={{ opacity: 0, y: 10 }} 
               animate={{ opacity: 1, y: 0 }} 
               exit={{ opacity: 0, y: -10 }}
-              transition={{ duration: 0.4, ease: "easeOut" }}
+              transition={{ duration: 0.3, ease: "easeOut" }}
             >
-              <Partner profile={profile!} />
+              <Partner profile={currentProfile} />
             </motion.div>
           )}
           {activeTab === 'settings' && (
@@ -187,20 +385,20 @@ export default function App() {
               initial={{ opacity: 0, y: 10 }} 
               animate={{ opacity: 1, y: 0 }} 
               exit={{ opacity: 0, y: -10 }}
-              transition={{ duration: 0.4, ease: "easeOut" }}
+              transition={{ duration: 0.3, ease: "easeOut" }}
             >
-              <Settings profile={profile!} />
+              <Settings profile={currentProfile} />
             </motion.div>
           )}
         </AnimatePresence>
       </main>
 
-      <nav className="fixed bottom-8 left-1/2 -translate-x-1/2 w-[calc(100%-4rem)] max-w-md bg-white/5 backdrop-blur-xl px-8 py-5 rounded-[2.5rem] shadow-2xl shadow-black/20 border border-white/10 z-20">
-        <div className="flex items-center justify-between">
-          <NavButton active={activeTab === 'dashboard'} onClick={() => setActiveTab('dashboard')} icon={<Activity size={22} />} label="Daily" />
-          <NavButton active={activeTab === 'goals'} onClick={() => setActiveTab('goals')} icon={<Target size={22} />} label="Goals" />
-          <NavButton active={activeTab === 'partner'} onClick={() => setActiveTab('partner')} icon={<Users size={22} />} label="Partner" />
-          <NavButton active={activeTab === 'settings'} onClick={() => setActiveTab('settings')} icon={<SettingsIcon size={22} />} label="Settings" />
+      <nav className="fixed safe-nav-bottom left-1/2 -translate-x-1/2 w-[calc(100%-2rem)] max-w-md bg-black/60 backdrop-blur-2xl px-3 py-2.5 rounded-[2.5rem] shadow-2xl shadow-black/60 border border-white/10 z-40">
+        <div className="flex items-center justify-around">
+          <NavButton active={activeTab === 'dashboard'} onClick={() => setActiveTab('dashboard')} icon={<Activity size={20} />} label="Daily" />
+          <NavButton active={activeTab === 'goals'} onClick={() => setActiveTab('goals')} icon={<Target size={20} />} label="Goals" />
+          <NavButton active={activeTab === 'partner'} onClick={() => setActiveTab('partner')} icon={<Users size={20} />} label="Partner" />
+          <NavButton active={activeTab === 'settings'} onClick={() => setActiveTab('settings')} icon={<SettingsIcon size={20} />} label="Settings" />
         </div>
       </nav>
     </div>
@@ -211,10 +409,14 @@ function NavButton({ active, onClick, icon, label }: { active: boolean; onClick:
   return (
     <button
       onClick={onClick}
-      className={`flex flex-col items-center gap-1.5 transition-all duration-300 ${active ? 'text-accent scale-110' : 'text-white/30 hover:text-white/60'}`}
+      className={`relative px-4 py-2 rounded-2xl flex flex-col items-center gap-1 transition-all duration-200 active:scale-95 ${
+        active 
+          ? 'text-paper bg-accent font-extrabold shadow-lg shadow-accent/25' 
+          : 'text-white/45 hover:text-white/90 hover:bg-white/5 font-semibold'
+      }`}
     >
       {icon}
-      <span className={`text-sm font-bold tracking-wide ${active ? 'opacity-100' : 'opacity-0'}`}>{label}</span>
+      <span className="text-[11px] tracking-tight">{label}</span>
     </button>
   );
 }

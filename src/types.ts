@@ -10,6 +10,7 @@ export interface UserProfile {
   calorieGoal?: number;
   stepGoal?: number;
   waterGoal?: number;
+  supplements?: string[];
 }
 
 export interface Habit {
@@ -30,6 +31,7 @@ export interface DailyLog {
   supplements: { [key: string]: boolean };
   affirmations: boolean;
   completedAll: boolean;
+  customGoals?: { [goalId: string]: number };
 }
 
 export interface MonthlyGoal {
@@ -38,4 +40,27 @@ export interface MonthlyGoal {
   goalType: string;
   targetValue: number;
   currentValue: number;
+}
+
+export interface SharedGoal {
+  id: string;
+  title: string;
+  category: 'steps' | 'calories' | 'workouts' | 'distance' | 'water' | 'active_minutes' | 'custom';
+  targetValue: number;
+  unit: string;
+  partner1Uid: string;
+  partner2Uid: string;
+  members: string[];
+  partner1Contribution: number;
+  partner2Contribution: number;
+  status: 'active' | 'completed';
+  createdBy: string;
+  createdAt: string;
+  endDate?: string;
+  notes?: string;
+  lastCheer?: {
+    senderUid: string;
+    text: string;
+    time: string;
+  };
 }

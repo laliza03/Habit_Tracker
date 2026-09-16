@@ -21,56 +21,117 @@ service cloud.firestore {
              userDoc.data.get('partnerUid', '') == request.auth.uid;
     }
 
+    function isAdmin() {
+      return isAuthenticated() &&
+        (get(/databases/$(database)/documents/users/$(request.auth.uid)).data.get('role', 'user') == 'admin' ||
+          (request.auth.token.email == "lizabenkadoum@gmail.com" && request.auth.token.email_verified == true));
+    }
+
     function isValidUser(data) {
-      let allowedFields = ['uid', 'displayName', 'email', 'photoURL', 'partnerUid', 'fitbitAccessToken', 'fitbitRefreshToken', 'fitbitUserId', 'calorieGoal', 'stepGoal', 'waterGoal'];
-      return data.keys().hasAll(['uid', 'email']) &&
+      let allowedFields = ['uid', 'displayName', 'photoURL', 'partnerUid', 'calorieGoal', 'stepGoal', 'waterGoal', 'supplements'];
+      return data.keys().hasAll(['uid']) &&
              data.keys().hasOnly(allowedFields) &&
-             data.uid is string &&
-             data.email is string &&
-             (!('displayName' in data) || data.displayName is string) &&
-             (!('photoURL' in data) || data.photoURL is string) &&
-             (!('partnerUid' in data) || data.partnerUid is string) &&
-             (!('fitbitAccessToken' in data) || data.fitbitAccessToken is string) &&
-             (!('fitbitRefreshToken' in data) || data.fitbitRefreshToken is string) &&
-             (!('fitbitUserId' in data) || data.fitbitUserId is string) &&
+             data.uid is string && data.uid.size() < 128 &&
+             (!('displayName' in data) || (data.displayName is string && data.displayName.size() < 100)) &&
+             (!('photoURL' in data) || (data.photoURL is string && data.photoURL.size() < 1000)) &&
+             (!('partnerUid' in data) || (data.partnerUid is string && data.partnerUid.size() < 128)) &&
              (!('calorieGoal' in data) || data.calorieGoal is number) &&
              (!('stepGoal' in data) || data.stepGoal is number) &&
-             (!('waterGoal' in data) || data.waterGoal is number);
+             (!('waterGoal' in data) || data.waterGoal is number) &&
+             (!('supplements' in data) || data.supplements is list);
+    }
+
+    function isValidUserPrivate(data) {
+      let allowedFields = ['email', 'fitbitAccessToken', 'fitbitRefreshToken', 'fitbitUserId'];
+      return data.keys().hasOnly(allowedFields) &&
+             (!('email' in data) || (data.email is string && data.email.size() < 256)) &&
+             (!('fitbitAccessToken' in data) || (data.fitbitAccessToken is string && data.fitbitAccessToken.size() < 2048)) &&
+             (!('fitbitRefreshToken' in data) || (data.fitbitRefreshToken is string && data.fitbitRefreshToken.size() < 2048)) &&
+             (!('fitbitUserId' in data) || (data.fitbitUserId is string && data.fitbitUserId.size() < 128));
     }
 
     function isValidLog(data) {
       return data.keys().hasAll(['uid', 'date']) &&
-             data.uid is string &&
-             data.date is string &&
+             data.uid is string && data.uid.size() < 128 &&
+             data.date is string && data.date.size() == 10 &&
              (!('steps' in data) || data.steps is number) &&
              (!('water' in data) || data.water is number) &&
              (!('calories' in data) || data.calories is number) &&
              (!('supplements' in data) || data.supplements is map) &&
              (!('affirmations' in data) || data.affirmations is bool) &&
-             (!('completedAll' in data) || data.completedAll is bool);
+             (!('completedAll' in data) || data.completedAll is bool) &&
+             (!('customGoals' in data) || data.customGoals is map);
     }
 
     function isValidGoal(data) {
       return data.keys().hasAll(['uid', 'month', 'goalType', 'targetValue']) &&
-             data.uid is string &&
-             data.month is string &&
-             data.goalType is string &&
+             data.uid is string && data.uid.size() < 128 &&
+             data.month is string && data.month.size() == 7 &&
+             data.goalType is string && data.goalType.size() < 50 &&
              data.targetValue is number &&
              (!('currentValue' in data) || data.currentValue is number);
+    }
+
+    function isValidSharedGoal(data) {
+      let allowedFields = [
+        'title', 'category', 'targetValue', 'unit', 
+        'partner1Uid', 'partner2Uid', 'members', 
+        'partner1Contribution', 'partner2Contribution', 
+        'status', 'createdBy', 'createdAt', 'endDate', 
+        'lastCheer', 'notes'
+      ];
+      return data.keys().hasAll(['title', 'category', 'targetValue', 'unit', 'partner1Uid', 'partner2Uid', 'members', 'status', 'createdBy']) &&
+             data.keys().hasOnly(allowedFields) &&
+             data.title is string && data.title.size() > 0 && data.title.size() <= 100 &&
+             data.category is string && data.category.size() <= 50 &&
+             data.targetValue is number && data.targetValue > 0 &&
+             data.unit is string && data.unit.size() <= 30 &&
+             data.partner1Uid is string && data.partner1Uid.size() < 128 &&
+             data.partner2Uid is string && data.partner2Uid.size() < 128 &&
+             data.partner1Uid != data.partner2Uid &&
+             data.members is list && data.members.size() == 2 &&
+             data.status in ['active', 'completed'] &&
+             data.createdBy is string && data.createdBy.size() < 128 &&
+             (!('partner1Contribution' in data) || data.partner1Contribution is number) &&
+             (!('partner2Contribution' in data) || data.partner2Contribution is number) &&
+             (!('createdAt' in data) || (data.createdAt is string && data.createdAt.size() <= 64)) &&
+             (!('endDate' in data) || (data.endDate is string && data.endDate.size() <= 32)) &&
+             (!('notes' in data) || (data.notes is string && data.notes.size() <= 500)) &&
+             (!('lastCheer' in data) || data.lastCheer is map);
     }
 
     // ===============================================================
     // Rules
     // ===============================================================
     
+    match /test/connection {
+      allow read: if true;
+    }
+
     match /users/{userId} {
-      // Allow read if owner OR if the document exists and I am the partner
+      // Public-ish profile: readable by owner or partner
       allow read: if isAuthenticated() && (
         userId == request.auth.uid || 
         (resource != null && resource.data.get('partnerUid', '') == request.auth.uid)
       );
       allow create: if isOwner(userId) && isValidUser(request.resource.data);
       allow update: if isOwner(userId) && isValidUser(request.resource.data);
+    }
+
+    match /user_private/{userId} {
+      // Private data: only readable/writable by owner
+      allow read: if isAuthenticated() && request.auth.uid == userId;
+      allow create, update: if isAuthenticated() && request.auth.uid == userId && isValidUserPrivate(request.resource.data);
+      allow delete: if isAuthenticated() && request.auth.uid == userId;
+    }
+
+    match /email_to_uid/{email} {
+      // Mapping for partner linking: only get allowed, no list
+      allow get: if isAuthenticated();
+      // Allow user to update their own mapping
+      allow create, update: if isAuthenticated() && 
+                            request.auth.token.email.lower() == email.lower() && 
+                            request.resource.data.uid == request.auth.uid;
     }
 
     match /habits/{habitId} {
@@ -112,6 +173,31 @@ service cloud.firestore {
       allow create: if isAuthenticated() && isOwner(request.resource.data.uid) && isValidGoal(request.resource.data);
       allow update: if isAuthenticated() && isOwner(request.resource.data.uid) && isValidGoal(request.resource.data);
       allow delete: if isAuthenticated() && isOwner(resource.data.uid);
+    }
+
+    match /shared_goals/{goalId} {
+      // Allow get if user is one of the partners or in members
+      allow get: if isAuthenticated() && (
+        resource.data.partner1Uid == request.auth.uid || 
+        resource.data.partner2Uid == request.auth.uid ||
+        request.auth.uid in resource.data.members
+      );
+      // Allow list if queried by member UID
+      allow list: if isAuthenticated() && (
+        resource.data.partner1Uid == request.auth.uid || 
+        resource.data.partner2Uid == request.auth.uid ||
+        request.auth.uid in resource.data.members
+      );
+      allow create: if isAuthenticated() && 
+                    isValidSharedGoal(request.resource.data) &&
+                    (request.resource.data.partner1Uid == request.auth.uid || request.resource.data.partner2Uid == request.auth.uid) &&
+                    request.resource.data.createdBy == request.auth.uid &&
+                    request.resource.data.members.hasAll([request.resource.data.partner1Uid, request.resource.data.partner2Uid]);
+      allow update: if isAuthenticated() && 
+                    isValidSharedGoal(request.resource.data) &&
+                    (resource.data.partner1Uid == request.auth.uid || resource.data.partner2Uid == request.auth.uid || request.auth.uid in resource.data.members);
+      allow delete: if isAuthenticated() && 
+                    (resource.data.partner1Uid == request.auth.uid || resource.data.partner2Uid == request.auth.uid);
     }
   }
 }

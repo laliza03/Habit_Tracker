@@ -1,23 +1,40 @@
 {
   "entities": {
     "UserProfile": {
-      "title": "User Profile",
-      "description": "User information and partner link",
+      "title": "User Profile (Public)",
+      "description": "Public user information and partner link",
       "type": "object",
       "properties": {
         "uid": { "type": "string" },
         "displayName": { "type": "string" },
-        "email": { "type": "string" },
         "photoURL": { "type": "string" },
         "partnerUid": { "type": "string", "description": "UID of the partner" },
-        "fitbitAccessToken": { "type": "string" },
-        "fitbitRefreshToken": { "type": "string" },
-        "fitbitUserId": { "type": "string" },
         "calorieGoal": { "type": "number" },
         "stepGoal": { "type": "number" },
         "waterGoal": { "type": "number" }
       },
-      "required": ["uid", "email"]
+      "required": ["uid"]
+    },
+    "UserPrivate": {
+      "title": "User Profile (Private)",
+      "description": "Sensitive user information",
+      "type": "object",
+      "properties": {
+        "email": { "type": "string" },
+        "fitbitAccessToken": { "type": "string" },
+        "fitbitRefreshToken": { "type": "string" },
+        "fitbitUserId": { "type": "string" }
+      },
+      "required": ["email"]
+    },
+    "EmailToUid": {
+      "title": "Email to UID Mapping",
+      "description": "Mapping for partner linking",
+      "type": "object",
+      "properties": {
+        "uid": { "type": "string" }
+      },
+      "required": ["uid"]
     },
     "Habit": {
       "title": "Habit",
@@ -61,12 +78,42 @@
         "currentValue": { "type": "number" }
       },
       "required": ["uid", "month", "goalType", "targetValue"]
+    },
+    "SharedGoal": {
+      "title": "Shared Fitness Goal",
+      "description": "Common fitness goal shared between two connected partners",
+      "type": "object",
+      "properties": {
+        "title": { "type": "string", "maxLength": 100 },
+        "category": { "type": "string", "enum": ["steps", "calories", "workouts", "distance", "water", "active_minutes", "custom"] },
+        "targetValue": { "type": "number" },
+        "unit": { "type": "string", "maxLength": 30 },
+        "partner1Uid": { "type": "string", "maxLength": 128 },
+        "partner2Uid": { "type": "string", "maxLength": 128 },
+        "members": { "type": "array", "description": "List containing [partner1Uid, partner2Uid]" },
+        "partner1Contribution": { "type": "number" },
+        "partner2Contribution": { "type": "number" },
+        "status": { "type": "string", "enum": ["active", "completed"] },
+        "createdBy": { "type": "string", "maxLength": 128 },
+        "createdAt": { "type": "string" },
+        "endDate": { "type": "string" },
+        "notes": { "type": "string", "maxLength": 500 }
+      },
+      "required": ["title", "category", "targetValue", "unit", "partner1Uid", "partner2Uid", "members", "status", "createdBy"]
     }
   },
   "firestore": {
     "/users/{uid}": {
       "schema": "UserProfile",
-      "description": "User profiles"
+      "description": "Public user profiles"
+    },
+    "/user_private/{uid}": {
+      "schema": "UserPrivate",
+      "description": "Private user data"
+    },
+    "/email_to_uid/{email}": {
+      "schema": "EmailToUid",
+      "description": "Email to UID mapping"
     },
     "/habits/{habitId}": {
       "schema": "Habit",
@@ -79,6 +126,10 @@
     "/goals/{goalId}": {
       "schema": "MonthlyGoal",
       "description": "Monthly goals (goalId is uid_month_type)"
+    },
+    "/shared_goals/{goalId}": {
+      "schema": "SharedGoal",
+      "description": "Shared fitness goals between connected partners"
     }
   }
 }

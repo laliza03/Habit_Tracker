@@ -1,9 +1,10 @@
 import { useState, useEffect } from 'react';
 import { db } from '../firebase';
-import { doc, updateDoc, collection, query, where, getDocs } from 'firebase/firestore';
+import { doc, updateDoc, collection, query, where, getDocs, getDoc } from 'firebase/firestore';
 import { UserProfile } from '../types';
-import { Settings as SettingsIcon, Link as LinkIcon, Activity, UserPlus, Save, Users, Target } from 'lucide-react';
-import { motion } from 'framer-motion';
+import { Settings as SettingsIcon, Link as LinkIcon, Activity, UserPlus, Save, Users, Target, Smartphone, Sparkles, Plus, Trash2, Check } from 'lucide-react';
+import { motion, AnimatePresence } from 'framer-motion';
+import MobileInstallPrompt from './MobileInstallPrompt';
 
 export default function Settings({ profile }: { profile: UserProfile }) {
   const [partnerEmail, setPartnerEmail] = useState('');
@@ -13,6 +14,20 @@ export default function Settings({ profile }: { profile: UserProfile }) {
     calorieGoal: profile.calorieGoal || 2000,
   });
   const [saving, setSaving] = useState(false);
+  const [savingSupplements, setSavingSupplements] = useState(false);
+  const [supplementsList, setSupplementsList] = useState<string[]>(() => {
+    return profile.supplements && profile.supplements.length > 0
+      ? profile.supplements
+      : ['creatine', 'biotin', 'omega', 'magnesium'];
+  });
+  const [newSupplementInput, setNewSupplementInput] = useState('');
+  const [supplementSuccessMsg, setSupplementSuccessMsg] = useState<string | null>(null);
+
+  useEffect(() => {
+    if (profile.supplements && profile.supplements.length > 0) {
+      setSupplementsList(profile.supplements);
+    }
+  }, [profile.supplements]);
 
   const handleSaveGoals = async () => {
     setSaving(true);
@@ -26,19 +41,57 @@ export default function Settings({ profile }: { profile: UserProfile }) {
     }
   };
 
+  const handleAddSupplement = async () => {
+    const trimmed = newSupplementInput.trim().toLowerCase();
+    if (!trimmed) return;
+    if (supplementsList.includes(trimmed)) {
+      alert(`"${trimmed}" is already in your supplements list.`);
+      return;
+    }
+
+    const updated = [...supplementsList, trimmed];
+    setSupplementsList(updated);
+    setNewSupplementInput('');
+
+    setSavingSupplements(true);
+    try {
+      await updateDoc(doc(db, 'users', profile.uid), { supplements: updated });
+      setSupplementSuccessMsg(`Added ${trimmed}!`);
+      setTimeout(() => setSupplementSuccessMsg(null), 3000);
+    } catch (err) {
+      console.error("Error saving supplement:", err);
+    } finally {
+      setSavingSupplements(false);
+    }
+  };
+
+  const handleDeleteSupplement = async (itemToDelete: string) => {
+    const updated = supplementsList.filter(s => s !== itemToDelete);
+    setSupplementsList(updated);
+
+    setSavingSupplements(true);
+    try {
+      await updateDoc(doc(db, 'users', profile.uid), { supplements: updated });
+      setSupplementSuccessMsg(`Removed ${itemToDelete}`);
+      setTimeout(() => setSupplementSuccessMsg(null), 3000);
+    } catch (err) {
+      console.error("Error deleting supplement:", err);
+    } finally {
+      setSavingSupplements(false);
+    }
+  };
+
   const handleLinkPartner = async () => {
     if (!partnerEmail) return;
     try {
-      const q = query(collection(db, 'users'), where('email', '==', partnerEmail));
-      const snapshot = await getDocs(q);
-      if (snapshot.empty) {
+      const emailDoc = await getDoc(doc(db, 'email_to_uid', partnerEmail.toLowerCase()));
+      if (!emailDoc.exists()) {
         alert('Partner not found. Make sure they have signed up for HabitHub.');
         return;
       }
-      const partnerData = snapshot.docs[0].data() as UserProfile;
-      await updateDoc(doc(db, 'users', profile.uid), { partnerUid: partnerData.uid });
-      await updateDoc(doc(db, 'users', partnerData.uid), { partnerUid: profile.uid });
-      alert('Partner linked successfully!');
+      const partnerUid = emailDoc.data().uid;
+      await updateDoc(doc(db, 'users', profile.uid), { partnerUid });
+      alert('Partner link requested! Your partner must also enter your email to complete the link.');
     } catch (error) {
       console.error('Link error:', error);
     }
@@ -58,7 +111,7 @@ export default function Settings({ profile }: { profile: UserProfile }) {
     const handleMessage = (event: MessageEvent) => {
       if (event.data?.type === 'FITBIT_AUTH_SUCCESS') {
         const { access_token, refresh_token, user_id } = event.data.payload;
-        updateDoc(doc(db, 'users', profile.uid), {
+        updateDoc(doc(db, 'user_private', profile.uid), {
           fitbitAccessToken: access_token,
           fitbitRefreshToken: refresh_token,
           fitbitUserId: user_id
@@ -71,37 +124,44 @@ export default function Settings({ profile }: { profile: UserProfile }) {
 
   return (
     <div className="space-y-10 pb-20">
-      <h2 className="text-3xl font-serif font-bold text-white tracking-tight">Settings</h2>
+      <div className="flex items-center justify-between">
+        <div>
+          <span className="text-[11px] font-bold text-accent uppercase tracking-widest block mb-1">Preferences</span>
+          <h2 className="text-3xl sm:text-4xl font-serif font-extrabold text-white tracking-tight">Settings</h2>
+        </div>
+      </div>
 
-      <section className="space-y-6">
-        <h3 className="text-xl font-serif font-bold text-white flex items-center gap-3">
-          <Activity size={20} className="text-accent" />
-          Daily Targets
-        </h3>
-        <div className="bg-white/5 backdrop-blur-md p-8 rounded-[2rem] border border-white/10 shadow-sm space-y-6">
+      <section className="space-y-5">
+        <div className="flex items-center gap-2.5">
+          <div className="w-8 h-8 rounded-xl bg-accent/15 text-accent flex items-center justify-center">
+            <Activity size={16} />
+          </div>
+          <h3 className="text-xl font-serif font-bold text-white tracking-tight">Daily Targets</h3>
+        </div>
+        <div className="glass-card p-7 sm:p-8 rounded-[2.2rem] space-y-5">
           <div className="space-y-2">
-            <label className="text-xs font-bold text-white/30 uppercase tracking-widest ml-1">Step Goal</label>
+            <label className="text-[11px] font-bold text-white/40 uppercase tracking-widest ml-1">Step Goal</label>
             <input 
               type="number" 
-              className="w-full p-4 bg-white/5 rounded-2xl border-none font-medium focus:ring-2 focus:ring-accent text-white placeholder:text-white/30"
+              className="w-full p-4 bg-black/40 rounded-2xl border border-white/10 font-bold focus:border-accent text-white placeholder:text-white/30 focus:outline-none"
               value={goals.stepGoal}
               onChange={e => setGoals({ ...goals, stepGoal: Number(e.target.value) })}
             />
           </div>
           <div className="space-y-2">
-            <label className="text-xs font-bold text-white/30 uppercase tracking-widest ml-1">Water Goal (ml)</label>
+            <label className="text-[11px] font-bold text-white/40 uppercase tracking-widest ml-1">Water Goal (ml)</label>
             <input 
               type="number" 
-              className="w-full p-4 bg-white/5 rounded-2xl border-none font-medium focus:ring-2 focus:ring-accent text-white placeholder:text-white/30"
+              className="w-full p-4 bg-black/40 rounded-2xl border border-white/10 font-bold focus:border-accent text-white placeholder:text-white/30 focus:outline-none"
               value={goals.waterGoal}
               onChange={e => setGoals({ ...goals, waterGoal: Number(e.target.value) })}
             />
           </div>
           <div className="space-y-2">
-            <label className="text-xs font-bold text-white/30 uppercase tracking-widest ml-1">Calorie Goal</label>
+            <label className="text-[11px] font-bold text-white/40 uppercase tracking-widest ml-1">Calorie Goal</label>
             <input 
               type="number" 
-              className="w-full p-4 bg-white/5 rounded-2xl border-none font-medium focus:ring-2 focus:ring-accent text-white placeholder:text-white/30"
+              className="w-full p-4 bg-black/40 rounded-2xl border border-white/10 font-bold focus:border-accent text-white placeholder:text-white/30 focus:outline-none"
               value={goals.calorieGoal}
               onChange={e => setGoals({ ...goals, calorieGoal: Number(e.target.value) })}
             />
@@ -109,11 +169,98 @@ export default function Settings({ profile }: { profile: UserProfile }) {
           <button 
             onClick={handleSaveGoals}
             disabled={saving}
-            className="w-full py-5 bg-accent text-paper rounded-2xl font-bold flex items-center justify-center gap-3 shadow-lg shadow-accent/20 hover:bg-accent/90 transition-all active:scale-[0.98] disabled:opacity-50"
+            className="w-full py-4 bg-accent text-paper rounded-2xl font-extrabold flex items-center justify-center gap-2.5 shadow-lg shadow-accent/20 hover:bg-accent/90 transition-all active:scale-[0.98] disabled:opacity-50"
           >
-            <Save size={20} />
+            <Save size={18} />
             {saving ? 'Saving...' : 'Save Goals'}
           </button>
+        </div>
+      </section>
+
+      {/* Supplement Routine Management */}
+      <section className="space-y-6" id="settings-supplements-section">
+        <div className="flex items-center justify-between">
+          <h3 className="text-xl font-serif font-bold text-white flex items-center gap-3">
+            <Sparkles size={20} className="text-accent" />
+            My Supplement List
+          </h3>
+          <span className="text-xs font-bold text-white/40 uppercase tracking-wider">
+            {supplementsList.length} Active
+          </span>
+        </div>
+
+        <div className="bg-white/5 backdrop-blur-md p-8 rounded-[2rem] border border-white/10 shadow-sm space-y-6">
+          <p className="text-white/60 text-sm font-medium">
+            Customize the list of supplements you want to take daily. Any item added or removed here is automatically updated on your Daily Dashboard.
+          </p>
+
+          {/* Add New Supplement Input */}
+          <div className="flex gap-2">
+            <input
+              type="text"
+              placeholder="e.g., Vitamin D3, Zinc, Ashwagandha..."
+              value={newSupplementInput}
+              onChange={(e) => setNewSupplementInput(e.target.value)}
+              onKeyDown={(e) => {
+                if (e.key === 'Enter') {
+                  e.preventDefault();
+                  handleAddSupplement();
+                }
+              }}
+              className="flex-1 p-4 bg-white/5 rounded-2xl border-none font-medium focus:ring-2 focus:ring-accent text-white placeholder:text-white/30"
+            />
+            <button
+              type="button"
+              onClick={handleAddSupplement}
+              disabled={!newSupplementInput.trim() || savingSupplements}
+              className="px-6 py-4 bg-accent text-paper rounded-2xl font-bold flex items-center gap-2 hover:bg-accent/90 transition-all disabled:opacity-40 active:scale-95 shadow-md shadow-accent/20 shrink-0"
+            >
+              <Plus size={18} />
+              <span>Add</span>
+            </button>
+          </div>
+
+          {/* Toast message */}
+          {supplementSuccessMsg && (
+            <motion.div
+              initial={{ opacity: 0, y: -5 }}
+              animate={{ opacity: 1, y: 0 }}
+              className="p-3 bg-emerald-500/15 border border-emerald-500/30 rounded-xl text-emerald-400 text-xs font-bold flex items-center gap-2"
+            >
+              <Check size={14} />
+              <span>{supplementSuccessMsg}</span>
+            </motion.div>
+          )}
+
+          {/* List of current supplements with delete buttons */}
+          <div className="space-y-2 pt-2">
+            <label className="text-xs font-bold text-white/30 uppercase tracking-widest ml-1 block">
+              Current Supplements
+            </label>
+            {supplementsList.length === 0 ? (
+              <p className="text-white/40 text-sm py-4 italic">No supplements configured. Add one above!</p>
+            ) : (
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                {supplementsList.map((supp) => (
+                  <div
+                    key={supp}
+                    className="p-3.5 px-4 bg-white/5 border border-white/10 rounded-2xl flex items-center justify-between group hover:border-white/20 transition-all"
+                  >
+                    <span className="capitalize font-bold text-white text-sm">{supp}</span>
+                    <button
+                      type="button"
+                      onClick={() => handleDeleteSupplement(supp)}
+                      disabled={savingSupplements}
+                      title={`Remove ${supp}`}
+                      className="p-2 text-white/30 hover:text-rose-400 hover:bg-rose-500/15 rounded-xl transition-all active:scale-95"
+                    >
+                      <Trash2 size={16} />
+                    </button>
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
         </div>
       </section>
 
@@ -164,6 +311,19 @@ export default function Settings({ profile }: { profile: UserProfile }) {
           >
             Link Partner
           </button>
+        </div>
+      </section>
+
+      <section className="space-y-6">
+        <h3 className="text-xl font-serif font-bold text-white flex items-center gap-3">
+          <Smartphone size={20} className="text-accent" />
+          Mobile Application (iOS & Android)
+        </h3>
+        <div className="bg-white/5 backdrop-blur-md p-8 rounded-[2rem] border border-white/10 shadow-sm space-y-4">
+          <p className="text-white/60 text-sm font-medium">
+            HabitHub is designed as a full mobile application for both iPhone (iOS) and Android devices. Install it directly to your device for full-screen immersive tracking and instantaneous updates.
+          </p>
+          <MobileInstallPrompt compact={true} />
         </div>
       </section>
     </div>

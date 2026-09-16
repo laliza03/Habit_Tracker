@@ -1,5 +1,6 @@
 {
   "name": "HabitHub",
-  "description": "A shared habit tracking app for partners to reach health goals together. Track steps (Fitbit), water, supplements, affirmations, and calories.",
-  "requestFramePermissions": ["geolocation"]
+  "description": "A shared mobile habit and fitness tracking app for partners on iOS and Android to reach health goals together. Track shared fitness goals, steps (Fitbit), water, supplements, affirmations, and calories.",
+  "requestFramePermissions": ["geolocation"],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
 }
