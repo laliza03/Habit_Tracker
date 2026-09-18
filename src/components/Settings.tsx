@@ -1,12 +1,13 @@
 import { useState, useEffect } from 'react';
-import { db } from '../firebase';
+import { auth, db } from '../firebase';
 import { doc, updateDoc, collection, query, where, getDocs, getDoc } from 'firebase/firestore';
 import { UserProfile } from '../types';
 import { Settings as SettingsIcon, Link as LinkIcon, Activity, UserPlus, Save, Users, Target, Smartphone, Sparkles, Plus, Trash2, Check } from 'lucide-react';
 import { motion, AnimatePresence } from 'framer-motion';
 import MobileInstallPrompt from './MobileInstallPrompt';
+import { isGuestProfile, updateGuestProfile } from '../localData';
 
-export default function Settings({ profile }: { profile: UserProfile }) {
+export default function Settings({ profile, onProfileChange }: { profile: UserProfile; onProfileChange: (profile: UserProfile) => void }) {
   const [partnerEmail, setPartnerEmail] = useState('');
   const [goals, setGoals] = useState({
     stepGoal: profile.stepGoal || 10000,
@@ -32,8 +33,15 @@ export default function Settings({ profile }: { profile: UserProfile }) {
   const handleSaveGoals = async () => {
     setSaving(true);
     try {
+      if (isGuestProfile(profile)) {
+        onProfileChange(updateGuestProfile(profile, goals));
+        setSupplementSuccessMsg('Goals saved on this device.');
+        setTimeout(() => setSupplementSuccessMsg(null), 3000);
+        return;
+      }
       await updateDoc(doc(db, 'users', profile.uid), goals);
-      alert('Goals updated!');
+      setSupplementSuccessMsg('Goals updated!');
+      setTimeout(() => setSupplementSuccessMsg(null), 3000);
     } catch (error) {
       console.error('Save error:', error);
     } finally {
@@ -55,7 +63,11 @@ export default function Settings({ profile }: { profile: UserProfile }) {
 
     setSavingSupplements(true);
     try {
+      if (isGuestProfile(profile)) {
+        onProfileChange(updateGuestProfile(profile, { supplements: updated }));
+      } else {
       await updateDoc(doc(db, 'users', profile.uid), { supplements: updated });
+      }
       setSupplementSuccessMsg(`Added ${trimmed}!`);
       setTimeout(() => setSupplementSuccessMsg(null), 3000);
     } catch (err) {
@@ -71,7 +83,11 @@ export default function Settings({ profile }: { profile: UserProfile }) {
 
     setSavingSupplements(true);
     try {
+      if (isGuestProfile(profile)) {
+        onProfileChange(updateGuestProfile(profile, { supplements: updated }));
+      } else {
       await updateDoc(doc(db, 'users', profile.uid), { supplements: updated });
+      }
       setSupplementSuccessMsg(`Removed ${itemToDelete}`);
       setTimeout(() => setSupplementSuccessMsg(null), 3000);
     } catch (err) {
@@ -83,6 +99,10 @@ export default function Settings({ profile }: { profile: UserProfile }) {
 
   const handleLinkPartner = async () => {
     if (!partnerEmail) return;
+    if (isGuestProfile(profile)) {
+      alert('Partner features require a signed-in account so your data can be securely shared.');
+      return;
+    }
     try {
       const emailDoc = await getDoc(doc(db, 'email_to_uid', partnerEmail.toLowerCase()));
       if (!emailDoc.exists()) {
@@ -98,29 +118,24 @@ export default function Settings({ profile }: { profile: UserProfile }) {
   };
 
   const connectFitbit = async () => {
+    if (isGuestProfile(profile)) {
+      alert('Sign in with Google before connecting a private activity source.');
+      return;
+    }
+    const user = auth.currentUser;
+    if (!user) return alert('Please sign in again before connecting Fitbit.');
     try {
-      const response = await fetch('/api/auth/fitbit/url');
-      const { url } = await response.json();
-      window.open(url, 'fitbit_oauth', 'width=600,height=700');
+      const response = await fetch('/api/activity-sources/fitbit/start', {
+        method: 'POST',
+        headers: { Authorization: `Bearer ${await user.getIdToken()}` },
+      });
+      const result = await response.json();
+      if (!response.ok) throw new Error(result.error || 'Fitbit is not ready yet.');
+      window.location.assign(result.url);
     } catch (error) {
-      console.error('Fitbit auth error:', error);
+      alert(error instanceof Error ? error.message : 'Fitbit could not be connected.');
     }
   };
-
-  useEffect(() => {
-    const handleMessage = (event: MessageEvent) => {
-      if (event.data?.type === 'FITBIT_AUTH_SUCCESS') {
-        const { access_token, refresh_token, user_id } = event.data.payload;
-        updateDoc(doc(db, 'user_private', profile.uid), {
-          fitbitAccessToken: access_token,
-          fitbitRefreshToken: refresh_token,
-          fitbitUserId: user_id
-        }).then(() => alert('Fitbit connected!'));
-      }
-    };
-    window.addEventListener('message', handleMessage);
-    return () => window.removeEventListener('message', handleMessage);
-  }, [profile.uid]);
 
   return (
     <div className="space-y-10 pb-20">
@@ -273,19 +288,13 @@ export default function Settings({ profile }: { profile: UserProfile }) {
           <div className="flex items-center justify-between">
             <div>
               <p className="font-serif font-bold text-lg text-white">Fitbit</p>
-              <p className="text-sm text-white/40">
-                {profile.fitbitUserId ? 'Connected successfully' : 'Not connected yet'}
-              </p>
+              <p className="text-sm text-white/40">Securely sync steps, active calories, and hydration.</p>
             </div>
             <button 
               onClick={connectFitbit}
-              className={`px-8 py-3 rounded-xl font-bold transition-all active:scale-95 ${
-                profile.fitbitUserId 
-                  ? 'bg-white/10 text-white/60' 
-                  : 'bg-accent text-paper shadow-lg shadow-accent/20 hover:bg-accent/90'
-              }`}
+              className="px-8 py-3 rounded-xl font-bold bg-accent text-paper shadow-lg shadow-accent/20 hover:bg-accent/90 transition-all active:scale-95"
             >
-              {profile.fitbitUserId ? 'Reconnect' : 'Connect'}
+              Connect
             </button>
           </div>
         </div>

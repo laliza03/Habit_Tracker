@@ -1,15 +1,16 @@
-import React, { useState, useEffect, useRef } from 'react';
+import React, { lazy, Suspense, useState, useEffect, useRef } from 'react';
 import { auth, db } from './firebase';
 import { onAuthStateChanged, signInWithPopup, GoogleAuthProvider, signOut, User } from 'firebase/auth';
 import { doc, getDoc, setDoc, onSnapshot } from 'firebase/firestore';
 import { UserProfile } from './types';
-import Dashboard from './components/Dashboard';
-import Goals from './components/Goals';
-import Partner from './components/Partner';
-import Settings from './components/Settings';
 import MobileInstallPrompt from './components/MobileInstallPrompt';
 import { Layout, LogIn, Activity, Target, Users, Settings as SettingsIcon, LogOut, AlertCircle, Smartphone, RotateCcw } from 'lucide-react';
 import { motion, AnimatePresence } from 'framer-motion';
+
+const Dashboard = lazy(() => import('./components/Dashboard'));
+const Goals = lazy(() => import('./components/Goals'));
+const Partner = lazy(() => import('./components/Partner'));
+const Settings = lazy(() => import('./components/Settings'));
 
 export default function App() {
   const [user, setUser] = useState<User | null>(null);
@@ -26,7 +27,6 @@ export default function App() {
   const [activeTab, setActiveTab] = useState<'dashboard' | 'goals' | 'partner' | 'settings'>('dashboard');
 
   const unsubPublicRef = useRef<(() => void) | null>(null);
-  const unsubPrivateRef = useRef<(() => void) | null>(null);
 
   useEffect(() => {
     // Show recovery options if loading takes longer than 1.5 seconds
@@ -46,10 +46,6 @@ export default function App() {
       if (unsubPublicRef.current) {
         unsubPublicRef.current();
         unsubPublicRef.current = null;
-      }
-      if (unsubPrivateRef.current) {
-        unsubPrivateRef.current();
-        unsubPrivateRef.current = null;
       }
 
       if (!u) {
@@ -122,19 +118,6 @@ export default function App() {
           console.warn('Realtime public profile sync warning:', err);
         });
 
-        unsubPrivateRef.current = onSnapshot(doc(db, 'user_private', u.uid), (snapshot) => {
-          if (snapshot.exists()) {
-            setProfile(prev => {
-              const updated = { ...(prev || defaultProfile), ...snapshot.data() } as UserProfile;
-              try {
-                localStorage.setItem('habithub_active_profile', JSON.stringify(updated));
-              } catch {}
-              return updated;
-            });
-          }
-        }, (err) => {
-          console.warn('Realtime private profile sync warning:', err);
-        });
       } catch (error) {
         console.warn('Error loading profile from Firestore, using default profile:', error);
       } finally {
@@ -147,7 +130,6 @@ export default function App() {
       clearTimeout(hardTimeout);
       unsubscribeAuth();
       if (unsubPublicRef.current) unsubPublicRef.current();
-      if (unsubPrivateRef.current) unsubPrivateRef.current();
     };
   }, []);
 
@@ -194,6 +176,13 @@ export default function App() {
     setProfile(null);
     setUser(null);
     signOut(auth).catch(() => {});
+  };
+
+  const handleProfileChange = (updatedProfile: UserProfile) => {
+    setProfile(updatedProfile);
+    try {
+      localStorage.setItem('habithub_active_profile', JSON.stringify(updatedProfile));
+    } catch {}
   };
 
   const currentProfile: UserProfile | null = profile || (user ? {
@@ -345,6 +334,7 @@ export default function App() {
 
       <main className="max-w-md mx-auto px-5 sm:px-8 py-6 sm:py-8">
         <MobileInstallPrompt />
+        <Suspense fallback={<PageLoading />}>
         <AnimatePresence mode="wait">
           {activeTab === 'dashboard' && (
             <motion.div 
@@ -387,10 +377,11 @@ export default function App() {
               exit={{ opacity: 0, y: -10 }}
               transition={{ duration: 0.3, ease: "easeOut" }}
             >
-              <Settings profile={currentProfile} />
+              <Settings profile={currentProfile} onProfileChange={handleProfileChange} />
             </motion.div>
           )}
         </AnimatePresence>
+        </Suspense>
       </main>
 
       <nav className="fixed safe-nav-bottom left-1/2 -translate-x-1/2 w-[calc(100%-2rem)] max-w-md bg-black/60 backdrop-blur-2xl px-3 py-2.5 rounded-[2.5rem] shadow-2xl shadow-black/60 border border-white/10 z-40">
@@ -401,6 +392,14 @@ export default function App() {
           <NavButton active={activeTab === 'settings'} onClick={() => setActiveTab('settings')} icon={<SettingsIcon size={20} />} label="Settings" />
         </div>
       </nav>
+    </div>
+  );
+}
+
+function PageLoading() {
+  return (
+    <div className="min-h-[50vh] flex items-center justify-center text-sm font-medium text-white/50">
+      Loading your habits…
     </div>
   );
 }

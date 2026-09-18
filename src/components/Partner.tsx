@@ -6,6 +6,7 @@ import { format } from 'date-fns';
 import { Users, Heart, CheckCircle2, Footprints, Droplets, Flame, Target } from 'lucide-react';
 import { motion } from 'framer-motion';
 import SharedGoals from './SharedGoals';
+import { isGuestProfile } from '../localData';
 
 export default function Partner({ profile }: { profile: UserProfile }) {
   const [partner, setPartner] = useState<UserProfile | null>(null);
@@ -15,6 +16,12 @@ export default function Partner({ profile }: { profile: UserProfile }) {
   const today = format(new Date(), 'yyyy-MM-dd');
 
   useEffect(() => {
+    if (isGuestProfile(profile)) {
+      setPartner(null);
+      setPartnerLog(null);
+      setIsWaiting(false);
+      return;
+    }
     if (profile.partnerUid) {
       setIsWaiting(false);
       const unsubPartner = onSnapshot(doc(db, 'users', profile.partnerUid), (snapshot) => {

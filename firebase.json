@@ -1,0 +1,13 @@
+{
+  "hosting": {
+    "public": "dist",
+    "ignore": ["firebase.json", "**/.*", "**/node_modules/**"],
+    "rewrites": [{ "source": "**", "destination": "/index.html" }]
+  },
+  "firestore": [
+    {
+      "database": "ai-studio-4cc74d8b-f76d-4dc3-9e60-38e5809ee87f",
+      "rules": "firestore.rules"
+    }
+  ]
+}

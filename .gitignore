@@ -2,6 +2,11 @@ node_modules/
 build/
 dist/
 coverage/
+.gradle/
+android/.gradle/
+android/build/
+android/app/build/
+ios/App/Pods/
 .DS_Store
 *.log
 .env*

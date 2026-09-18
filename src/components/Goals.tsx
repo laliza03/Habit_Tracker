@@ -7,6 +7,7 @@ import { Target, Plus, TrendingUp, Users, Heart, Trash2, CheckCircle2 } from 'lu
 import { motion, AnimatePresence } from 'framer-motion';
 import { LineChart, Line, ResponsiveContainer } from 'recharts';
 import SharedGoals from './SharedGoals';
+import { isGuestProfile, readGuestGoals, writeGuestGoals } from '../localData';
 
 export default function Goals({ profile }: { profile: UserProfile }) {
   const currentMonth = format(new Date(), 'yyyy-MM');
@@ -18,6 +19,10 @@ export default function Goals({ profile }: { profile: UserProfile }) {
 
   // Listen to partner profile if linked
   useEffect(() => {
+    if (isGuestProfile(profile)) {
+      setPartner(null);
+      return;
+    }
     if (profile.partnerUid) {
       const unsub = onSnapshot(doc(db, 'users', profile.partnerUid), (snapshot) => {
         if (snapshot.exists()) {
@@ -33,6 +38,10 @@ export default function Goals({ profile }: { profile: UserProfile }) {
   }, [profile.partnerUid]);
 
   useEffect(() => {
+    if (isGuestProfile(profile)) {
+      setGoals(readGuestGoals(profile, currentMonth));
+      return;
+    }
     const q = query(
       collection(db, 'goals'),
       where('uid', '==', profile.uid),
@@ -50,6 +59,22 @@ export default function Goals({ profile }: { profile: UserProfile }) {
 
   const handleAddGoal = async () => {
     if (!newGoal.type || newGoal.target <= 0) return;
+    if (isGuestProfile(profile)) {
+      const newStoredGoal: MonthlyGoal & { id: string } = {
+        id: crypto.randomUUID(),
+        uid: profile.uid,
+        month: currentMonth,
+        goalType: newGoal.type.trim(),
+        targetValue: newGoal.target,
+        currentValue: 0,
+      };
+      const updatedGoals = [...goals, newStoredGoal];
+      setGoals(updatedGoals);
+      writeGuestGoals(profile, updatedGoals);
+      setShowAdd(false);
+      setNewGoal({ type: '', target: 0 });
+      return;
+    }
     try {
       await addDoc(collection(db, 'goals'), {
         uid: profile.uid,
@@ -180,6 +205,14 @@ export default function Goals({ profile }: { profile: UserProfile }) {
                 key={goal.id} 
                 goal={goal} 
                 onUpdate={async (delta: number) => {
+                  if (isGuestProfile(profile)) {
+                    const updatedGoals = goals.map((item) => item.id === goal.id
+                      ? { ...item, currentValue: Math.max(0, (item.currentValue || 0) + delta) }
+                      : item);
+                    setGoals(updatedGoals);
+                    writeGuestGoals(profile, updatedGoals);
+                    return;
+                  }
                   try {
                     await updateDoc(doc(db, 'goals', goal.id), {
                       currentValue: Math.max(0, (goal.currentValue || 0) + delta)
@@ -190,6 +223,12 @@ export default function Goals({ profile }: { profile: UserProfile }) {
                 }}
                 onDelete={async () => {
                   if (confirm(`Delete goal "${goal.goalType}"?`)) {
+                    if (isGuestProfile(profile)) {
+                      const updatedGoals = goals.filter((item) => item.id !== goal.id);
+                      setGoals(updatedGoals);
+                      writeGuestGoals(profile, updatedGoals);
+                      return;
+                    }
                     try {
                       await deleteDoc(doc(db, 'goals', goal.id));
                     } catch (err) {

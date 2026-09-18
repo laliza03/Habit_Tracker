@@ -17,21 +17,26 @@ import {
   Award,
   Trash2
 } from 'lucide-react';
-import { fetchFitbitSteps, fetchFitbitWater, fetchFitbitCalories } from '../services/fitbit';
 import { motion } from 'framer-motion';
 import QuickLogStatCard from './QuickLogStatCard';
+import { isGuestProfile, readGuestGoals, readGuestLog, writeGuestGoals, writeGuestLog } from '../localData';
 
 export default function Dashboard({ profile }: { profile: UserProfile }) {
   const today = format(new Date(), 'yyyy-MM-dd');
   const currentMonth = format(new Date(), 'yyyy-MM');
   const logId = `${profile.uid}_${today}`;
   const [log, setLog] = useState<DailyLog | null>(null);
-  const [syncing, setSyncing] = useState(false);
   const [personalGoals, setPersonalGoals] = useState<(MonthlyGoal & { id: string })[]>([]);
   const [sharedGoals, setSharedGoals] = useState<SharedGoal[]>([]);
 
   // 1. Listen to today's log
   useEffect(() => {
+    if (isGuestProfile(profile)) {
+      const localLog = readGuestLog(profile, today);
+      setLog(localLog);
+      writeGuestLog(localLog);
+      return;
+    }
     const path = `logs/${logId}`;
     const userSupplements = profile.supplements && profile.supplements.length > 0
       ? profile.supplements
@@ -43,6 +48,13 @@ export default function Dashboard({ profile }: { profile: UserProfile }) {
         // Make sure all user supplements exist in log.supplements map
         let needsSupplementSync = false;
         const currentSupplements = { ...(data.supplements || {}) };
+
+        Object.keys(currentSupplements).forEach((supp) => {
+          if (!userSupplements.includes(supp)) {
+            delete currentSupplements[supp];
+            needsSupplementSync = true;
+          }
+        });
         
         userSupplements.forEach(supp => {
           if (currentSupplements[supp] === undefined) {
@@ -88,6 +100,10 @@ export default function Dashboard({ profile }: { profile: UserProfile }) {
 
   // 2. Real-time listener for personal monthly goals created in Goals tab
   useEffect(() => {
+    if (isGuestProfile(profile)) {
+      setPersonalGoals(readGuestGoals(profile, currentMonth));
+      return;
+    }
     const q = query(
       collection(db, 'goals'),
       where('uid', '==', profile.uid),
@@ -103,6 +119,10 @@ export default function Dashboard({ profile }: { profile: UserProfile }) {
 
   // 3. Real-time listener for shared partner goals
   useEffect(() => {
+    if (isGuestProfile(profile)) {
+      setSharedGoals([]);
+      return;
+    }
     const q = query(
       collection(db, 'shared_goals'),
       where('members', 'array-contains', profile.uid),
@@ -121,6 +141,12 @@ export default function Dashboard({ profile }: { profile: UserProfile }) {
     if (!log) return;
     const current = log[metric] || 0;
     const nextVal = Math.max(0, current + amount);
+    if (isGuestProfile(profile)) {
+      const updated = { ...log, [metric]: nextVal };
+      setLog(updated);
+      writeGuestLog(updated);
+      return;
+    }
     const path = `logs/${logId}`;
     try {
       await updateDoc(doc(db, 'logs', logId), { [metric]: nextVal });
@@ -133,6 +159,12 @@ export default function Dashboard({ profile }: { profile: UserProfile }) {
   const handleSetMetric = async (metric: 'steps' | 'water' | 'calories', exactValue: number) => {
     if (!log) return;
     const nextVal = Math.max(0, exactValue);
+    if (isGuestProfile(profile)) {
+      const updated = { ...log, [metric]: nextVal };
+      setLog(updated);
+      writeGuestLog(updated);
+      return;
+    }
     const path = `logs/${logId}`;
     try {
       await updateDoc(doc(db, 'logs', logId), { [metric]: nextVal });
@@ -144,6 +176,12 @@ export default function Dashboard({ profile }: { profile: UserProfile }) {
   // Increment or update custom monthly goal from daily board
   const handleUpdateCustomGoal = async (goal: MonthlyGoal & { id: string }, delta: number) => {
     const nextVal = Math.max(0, (goal.currentValue || 0) + delta);
+    if (isGuestProfile(profile)) {
+      const updatedGoals = personalGoals.map((item) => item.id === goal.id ? { ...item, currentValue: nextVal } : item);
+      setPersonalGoals(updatedGoals);
+      writeGuestGoals(profile, updatedGoals);
+      return;
+    }
     try {
       await updateDoc(doc(db, 'goals', goal.id), { currentValue: nextVal });
     } catch (err) {
@@ -153,6 +191,12 @@ export default function Dashboard({ profile }: { profile: UserProfile }) {
 
   const handleDeletePersonalGoal = async (goalId: string) => {
     if (!confirm('Are you sure you want to delete this goal?')) return;
+    if (isGuestProfile(profile)) {
+      const updatedGoals = personalGoals.filter((goal) => goal.id !== goalId);
+      setPersonalGoals(updatedGoals);
+      writeGuestGoals(profile, updatedGoals);
+      return;
+    }
     try {
       await deleteDoc(doc(db, 'goals', goalId));
     } catch (err) {
@@ -164,6 +208,12 @@ export default function Dashboard({ profile }: { profile: UserProfile }) {
     if (!log) return;
     const path = `logs/${logId}`;
     const newSupplements = { ...log.supplements, [name]: !log.supplements[name] };
+    if (isGuestProfile(profile)) {
+      const updated = { ...log, supplements: newSupplements };
+      setLog(updated);
+      writeGuestLog(updated);
+      return;
+    }
     try {
       await updateDoc(doc(db, 'logs', logId), { supplements: newSupplements });
     } catch (error) {
@@ -179,12 +229,20 @@ export default function Dashboard({ profile }: { profile: UserProfile }) {
     if (log) {
       const nextSupplements = { ...log.supplements };
       delete nextSupplements[name];
+      if (isGuestProfile(profile)) {
+        const updated = { ...log, supplements: nextSupplements };
+        setLog(updated);
+        writeGuestLog(updated);
+      } else {
       try {
         await updateDoc(doc(db, 'logs', logId), { supplements: nextSupplements });
       } catch (err) {
         console.warn("Could not remove supplement from daily log:", err);
       }
+      }
     }
+
+    if (isGuestProfile(profile)) return;
 
     // 2. Remove from user profile list
     const currentList = profile.supplements && profile.supplements.length > 0
@@ -201,6 +259,12 @@ export default function Dashboard({ profile }: { profile: UserProfile }) {
   const toggleAffirmations = async () => {
     if (!log) return;
     const path = `logs/${logId}`;
+    if (isGuestProfile(profile)) {
+      const updated = { ...log, affirmations: !log.affirmations };
+      setLog(updated);
+      writeGuestLog(updated);
+      return;
+    }
     try {
       await updateDoc(doc(db, 'logs', logId), { affirmations: !log.affirmations });
     } catch (error) {
@@ -209,26 +273,7 @@ export default function Dashboard({ profile }: { profile: UserProfile }) {
   };
 
   const syncFitbit = async () => {
-    if (!profile.fitbitAccessToken || !profile.fitbitUserId) {
-      alert('Fitbit account is not connected. You can log manually using the quick buttons below, or connect Fitbit in Settings!');
-      return;
-    }
-    setSyncing(true);
-    const path = `logs/${logId}`;
-    try {
-      const steps = await fetchFitbitSteps(profile.fitbitAccessToken, profile.fitbitUserId, today);
-      const water = await fetchFitbitWater(profile.fitbitAccessToken, profile.fitbitUserId, today);
-      const calories = await fetchFitbitCalories(profile.fitbitAccessToken, profile.fitbitUserId, today);
-      
-      await updateDoc(doc(db, 'logs', logId), { steps, water, calories });
-    } catch (error) {
-      console.error('Sync error:', error);
-      if (error && typeof error === 'object' && 'code' in error && error.code === 'permission-denied') {
-        handleFirestoreError(error, OperationType.UPDATE, path);
-      }
-    } finally {
-      setSyncing(false);
-    }
+    alert('Fitbit sync is temporarily unavailable while we complete a secure server-side integration. Manual logging remains available.');
   };
 
   if (!log) return null;
@@ -250,11 +295,10 @@ export default function Dashboard({ profile }: { profile: UserProfile }) {
         </div>
         <button 
           onClick={syncFitbit}
-          disabled={syncing}
-          title={profile.fitbitAccessToken ? 'Sync Fitbit data' : 'Manual logging enabled (Connect Fitbit in Settings)'}
-          className="w-12 h-12 flex items-center justify-center bg-white/10 hover:bg-accent hover:text-paper text-white rounded-2xl shadow-lg border border-white/10 hover:border-transparent transition-all disabled:opacity-50 active:scale-95 group"
+          title="Fitbit sync is temporarily unavailable; use the manual logging controls below"
+          className="w-12 h-12 flex items-center justify-center bg-white/10 hover:bg-accent hover:text-paper text-white rounded-2xl shadow-lg border border-white/10 hover:border-transparent transition-all active:scale-95 group"
         >
-          <RefreshCw size={19} className={`transition-transform ${syncing ? 'animate-spin' : 'group-hover:rotate-180 duration-500'}`} />
+          <RefreshCw size={19} className="transition-transform group-hover:rotate-180 duration-500" />
         </button>
       </div>
 

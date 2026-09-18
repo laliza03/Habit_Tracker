@@ -13,12 +13,13 @@ service cloud.firestore {
     }
     
     function isPartnerOf(userId) {
-      // Check if the user at userId has the current user as their partner
-      // We use get() which will evaluate the rules for the user document
       let userDoc = get(/databases/$(database)/documents/users/$(userId));
-      return isAuthenticated() && 
-             userDoc != null && 
-             userDoc.data.get('partnerUid', '') == request.auth.uid;
+      let currentUserDoc = get(/databases/$(database)/documents/users/$(request.auth.uid));
+      return isAuthenticated() &&
+             userDoc != null &&
+             currentUserDoc != null &&
+             userDoc.data.get('partnerUid', '') == request.auth.uid &&
+             currentUserDoc.data.get('partnerUid', '') == userId;
     }
 
     function isAdmin() {
@@ -42,12 +43,9 @@ service cloud.firestore {
     }
 
     function isValidUserPrivate(data) {
-      let allowedFields = ['email', 'fitbitAccessToken', 'fitbitRefreshToken', 'fitbitUserId'];
+      let allowedFields = ['email'];
       return data.keys().hasOnly(allowedFields) &&
-             (!('email' in data) || (data.email is string && data.email.size() < 256)) &&
-             (!('fitbitAccessToken' in data) || (data.fitbitAccessToken is string && data.fitbitAccessToken.size() < 2048)) &&
-             (!('fitbitRefreshToken' in data) || (data.fitbitRefreshToken is string && data.fitbitRefreshToken.size() < 2048)) &&
-             (!('fitbitUserId' in data) || (data.fitbitUserId is string && data.fitbitUserId.size() < 128));
+             (!('email' in data) || (data.email is string && data.email.size() < 256));
     }
 
     function isValidLog(data) {
@@ -109,10 +107,10 @@ service cloud.firestore {
     }
 
     match /users/{userId} {
-      // Public-ish profile: readable by owner or partner
+      // Profiles are only shared after both users confirm the partnership.
       allow read: if isAuthenticated() && (
         userId == request.auth.uid || 
-        (resource != null && resource.data.get('partnerUid', '') == request.auth.uid)
+        (resource != null && isPartnerOf(userId))
       );
       allow create: if isOwner(userId) && isValidUser(request.resource.data);
       allow update: if isOwner(userId) && isValidUser(request.resource.data);

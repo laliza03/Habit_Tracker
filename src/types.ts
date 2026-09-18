@@ -4,9 +4,6 @@ export interface UserProfile {
   email: string;
   photoURL?: string;
   partnerUid?: string;
-  fitbitAccessToken?: string;
-  fitbitRefreshToken?: string;
-  fitbitUserId?: string;
   calorieGoal?: number;
   stepGoal?: number;
   waterGoal?: number;
